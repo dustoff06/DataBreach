@@ -1,0 +1,193 @@
+---
+title: "Breach"
+author: "Team HIM"
+date: "October 19, 2022"
+output:
+  html_document:
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Libraries
+
+```{r}
+
+library(Amelia)
+library(caret)
+library(dplyr)
+library(e1071)
+library(glmnet)
+library(magrittr)
+library(randomForest)
+
+```
+
+# Data & Missing
+
+```{r}
+
+mydata=read.csv('C:/Users/lfult/Desktop/Breach/breach.csv', stringsAsFactors = T)
+mydata=mydata %>% mutate_if(is.factor, na_if, y = "")
+missmap(mydata, x.cex=.5)
+
+```
+
+# Delete  by Row
+
+```{r}
+
+myr = function (x){
+  temp=rep(0,nrow(x))
+  for (i in 1:nrow(x)){
+    temp[i]=
+      sum(is.na(x[i, 1:ncol(x)]))/ncol(x)}
+  x$ROWMISS=temp
+  x=x[order(-x$ROWMISS), ]
+  return(x)
+}
+
+mydf=myr(mydata)
+tmp=mydf$ROWMISS[1:77]
+names(tmp)=mydf$Hospital.Name[1:77]
+barplot(tmp, cex.names=.4, las=2)
+mydf=mydf[mydf$ROWMISS<.3,]
+missmap(mydf, x.cex=.5)
+
+
+```
+
+# Delete by Column
+
+```{r}
+
+myc = function(x){
+  co=rep(0,ncol(mydata))
+  for (i in 1:ncol(x)){co[i]=sum(is.na(x[1:nrow(x), i]))}
+  names(co)=colnames(mydata)
+  co=sort(co, decreasing=T)/nrow(mydata)
+  print(length(co[co>.3]))
+  tmp=co[1:72]
+  barplot(tmp[1:13], las=2, cex.names=.5, space=0)
+  print(names(tmp))
+  return(tmp)
+}
+
+cnames=myc(mydf)
+cnames
+todrop=names(cnames)
+todrop
+mydf= subset(mydf, select = !(names(mydf) %in% todrop)) 
+```
+
+
+# Manual Drop
+
+```{r}
+
+mydf$Hospital.Name=NULL
+mydf$Address=NULL
+mydf$County=NULL
+mydf$City=NULL
+mydf$Website=NULL
+mydf$DHC.Profile.Link=NULL
+mydf$Definitive.ID=NULL
+mydf$Zip.Code=NULL
+mydf$Latitude=NULL
+mydf$Longitude=NULL
+mydf$Phone=NULL
+mydf$Firm.Type=NULL
+mydf$Electronic.Health.Medical.Record...Ambulatory=NULL
+mydf$Electronic.Health.Medical.Record...Inpatient=NULL
+mydf$Emergency.Department.Information.System=NULL
+mydf$Revenue.Cycle.Management=NULL
+mydf$Company.Status=NULL
+mydf$ROWMISS=NULL
+missmap(mydf, x.cex=.5)
+
+write.csv(mydf, "C:/Users/lfult/Desktop/Breach/newbreach.csv", row.names=F)
+
+```
+
+# Impute Missing
+
+```{r}
+
+mydata=read.csv("C:/Users/lfult/Desktop/Breach/newbreach.csv", stringsAsFactors = T)
+mydata$FIPS.County.Code=as.factor(mydf$FIPS.County.Code)
+for(i in 1:ncol(mydata)){
+  if(is.numeric(mydata[,i])){
+    mydata[is.na(mydata[,i]), i] <- median(mydata[,i], na.rm = TRUE)
+  }
+}
+
+```
+
+# Correlation Plots
+
+```{r}
+
+require(corrplot)
+require(ggcorrplot)
+corfunction=function(d){
+  mycorr=cor(d[, 1:ncol(d)]); p.mat=ggcorrplot::cor_pmat(d[,1:ncol(d)])
+  myplot=ggcorrplot(mycorr, hc.order=TRUE,type="lower",
+                    colors=c("red", "white","green"),tl.cex = 8, 
+                    tl.col = "black", lab=TRUE, lab_size=1.5, p.mat=p.mat,
+                    insig="pch", pch=4)
+  print(myplot)}
+
+
+mycorr=cor(mydata[, 10:ncol(mydata)])
+corfunction(mycorr)
+
+```
+
+# Colinearity Drops
+
+```{r}
+
+newdata=mydata
+##Dropping for colinearity
+newdata$Net.Income=NULL
+newdata$Total.Operating.Expenses=NULL
+newdata$Total.Revenues=NULL
+newdata$Laboratory.Total.Costs=NULL
+#newdata$Total.Revenues=NULL
+newdata$Total.Patient.Revenue=NULL
+newdata$Total.Overhead.Costs=NULL
+newdata$Other.Income=NULL
+newdata$Net.Patient.Revenue=NULL
+newdata$Est..IT.Operating.Expense.Budget=NULL
+newdata$number.of..of.Employees=NULL
+newdata$Number.of.Medicare.Discharges=NULL
+newdata$Operating.Room.Square.Feet=NULL
+newdata$Total.Acute.Beds=NULL
+newdata$Routine.Service.Beds=NULL
+newdata$Inpatient.Revenue=NULL
+newdata$Outpatient.Revenue=NULL
+newdata$number.of..of.Discharges=NULL
+newdata$Laboratory.Square.Feet=NULL
+newdata$number.of..of.Affiliated.Physicians=NULL
+newdata$Est.number.of..of.ER.Visits=NULL
+newdata$Total.Facility.Square.Footage=NULL
+newdata$number.of..of.Staffed.Beds=NULL
+newdata$Est.number.of..of.Total.Surgeries=NULL
+
+
+mycorr=cor(newdata[, c(1,10:ncol(newdata))])
+corfunction(mycorr)
+write.csv(newdata, "C:/Users/lfult/Desktop/Breach/newbreach1.csv", row.names=F)
+```
+
+
+
+
+
