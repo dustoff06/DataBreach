@@ -1,0 +1,631 @@
+---
+title: "Breach Analysis"
+author: "Sith"
+date: "3/1/2023"
+output:
+  html_document:
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Remove Packages
+
+lapply(names(sessionInfo()$otherPkgs), function(pkgs)
+  detach(
+    paste0('package:', pkgs),
+    character.only = T,
+    unload = T,
+    force = T
+  ))
+
+```
+
+# Load Libraries
+
+## Load R
+
+```{r libraries, echo=FALSE}
+
+
+######Libraries#######
+suppressWarnings({suppressMessages({
+require(Amelia)      
+require(car)         
+require(caret)
+require(corrplot)
+require(dplyr)       
+require(ggplot2)     
+require(ggcorrplot)  
+require(ggExtra)   
+require(glmpath) 
+require(grid)        
+require(gridExtra)   
+require(kableExtra)  
+require(leaflet)
+require(leaflet.extras)
+require(leaps)  
+require(maptools)    
+require(MASS)    
+require(imbalance)
+require(psych)       
+require(raster)      
+require(RColorBrewer)
+require(ResourceSelection)
+require(reticulate)
+require(rgdal)       
+require(rgeos)       
+require(shiny)       
+require(sf)          
+require(sp)          
+require(tidyverse)   
+})    }) 
+######################
+
+
+
+```
+
+## Load Python 
+
+```{python}
+
+######################################################Initial Packages########################################################
+#Basic Operating System Stuff
+import os
+import gc #garbage collector
+import random #random seed generator
+
+#Basic dataframe, array, and math stuff
+import pandas as pd #data frame
+import math #math functions
+import numpy as np    #numerical package
+
+#Scikit learn
+from math import sqrt
+import sklearn as sk  #scikit learn
+import sklearn.linear_model 
+from sklearn.linear_model import LogisticRegression as LR
+from sklearn.kernel_ridge import KernelRidge
+from sklearn.utils import resample #sampling
+from sklearn.model_selection import train_test_split as tts, KFold #train test split
+from sklearn.decomposition import PCA #principal components
+from sklearn.metrics import classification_report as CR,confusion_matrix, roc_curve
+from sklearn.metrics import average_precision_score #for 2-class model
+from sklearn.metrics import PrecisionRecallDisplay as PRD
+from sklearn.metrics import ConfusionMatrixDisplay as CMD
+from sklearn.preprocessing import MinMaxScaler as MMS, StandardScaler as SS, PolynomialFeatures as poly # used for variable scaling data
+from sklearn.tree import DecisionTreeClassifier as Tree
+from sklearn.ensemble import RandomForestClassifier as RFC, ExtraTreesClassifier as ETC
+from sklearn.ensemble import GradientBoostingClassifier as GBC, AdaBoostClassifier as ABC
+from sklearn.gaussian_process import GaussianProcessClassifier as GPC  
+from sklearn.svm import LinearSVC, SVC
+from sklearn.linear_model import SGDClassifier as SGD
+from sklearn.naive_bayes import BernoulliNB as NB
+from sklearn.neighbors import KNeighborsClassifier as KNN
+from sklearn.pipeline import make_pipeline
+from sklearn.neural_network import MLPClassifier
+from sklearn.linear_model import Perceptron
+from sklearn.tree import plot_tree as treeplot, export_graphviz
+
+#from imblearn.over_sampling import SMOTE
+#from imblearn.under_sampling import RandomUnderSampler as RUS
+
+from scipy import misc, stats as st #Lots of stuff here
+from scipy.stats import norm
+import itertools
+
+from statsmodels.genmod.generalized_linear_model import GLM
+from statsmodels.genmod import families
+import statsmodels.stats.tests.test_influence
+import statsmodels.formula.api as smf
+import statsmodels.stats.api as sms
+import matplotlib.pyplot as plt
+from statsmodels.compat import lzip
+import statsmodels.api as sm
+
+#Graphing
+import seaborn as sns
+from IPython.display import SVG #Same here
+import matplotlib.pyplot as plt #plotting
+import matplotlib #image save
+from matplotlib.pyplot import imshow #Show images
+from PIL import Image #Another image utility
+import seaborn as sns
+
+
+os.chdir('C:/Users/lfult/Desktop/Breach')
+##############################################################################################################################
+
+```
+
+
+# Load Functions
+
+```{r}
+
+myprint=function(x){x%>%kbl()%>%kable_classic(html_font = "Cambria")}
+mycite=function(x){citation(x)}
+
+```
+
+# Load Geography 
+
+```{r geography}
+
+setwd("C:/Users/lfult/Desktop/Breach")
+
+if(!exists("myshape")) {
+  myshape=shapefile("cb_2018_us_county_500k.shp") #shape file
+}
+
+
+```
+
+# Load Flat Files
+
+```{r}
+
+countydata=read.csv("GIS.csv",fileEncoding="UTF-8-BOM", stringsAsFactors = T)
+missmap(countydata, x.cex=.6)
+countydata$M=countydata$FIPS
+countydata$Pop2020=NULL
+countydata$CensusMean=NULL
+
+
+```
+
+# Merge Shape and Flat File
+
+```{r merge}
+
+myshape$M=as.numeric(myshape$GEOID)
+counties=sp::merge(myshape, countydata, by="M",all.x=F)
+counties=counties[complete.cases(counties@data),]
+mydata=counties@data
+#write.csv(counties@data,'merged.csv', row.names = FALSE)
+missmap(mydata, col=c('red','blue'))
+
+```
+
+# Descriptive Analysis and Preprocessing
+
+## GIS
+
+
+```{r}
+
+temp=counties
+qpal<-colorBin(c("green", "orange", "red"), 0:10); qpal2<-colorNumeric("Reds", 0:11)
+
+leaf=leaflet(counties) %>%
+  addTiles(group = "OSM (default)") %>%
+  addMapPane("borders", zIndex = 410) %>%
+  
+  #Base Diagrams
+  addPolylines(data = temp,color = "black",
+               opacity = 1, weight = 1, group="Borders", options = pathOptions(pane="borders"))%>%
+  fitBounds(-124.8, -66.9, 24.4,49.4) %>% setView(-98.6, 39.83, zoom = 4)%>%
+  
+  addPolygons(stroke = FALSE,fillOpacity = 1, smoothFactor = 0.2, 
+              color=~qpal(temp@data$y), 
+              popup = paste("County: ", temp@data$NAME, "<br>", 
+                    "Count of Breaches: ", temp@data$y, "<br>",
+                    "Breaches per 100K: ", round(temp@data$BreachesPer100K),3), 
+              group='Sum of Breaches')%>%
+  
+  addPolygons(stroke = FALSE,fillOpacity = 1, smoothFactor = 0.2, 
+              color=~qpal2(temp@data$BreachesPer100K), 
+              popup = paste("County: ", temp@data$NAME, "<br>", 
+                    "Count of Breaches: ", temp@data$y, "<br>",
+                    "Breaches per 100K: ",temp@data$BreachesPer100K), 
+              group='Breaches Per 100K')%>%
+  
+  addLegend(data=temp, 
+            "bottomleft", opacity=1, pal = qpal, 
+            values = ~temp@data$y,
+            title = "Sum of Breaches")%>%
+  
+  addLegend(data=temp, 
+            "bottomright", opacity=1, pal = qpal2, 
+            values = ~temp@data$BreachesPer100K,
+            title = "Breaches Per 100K")%>%
+
+  addLayersControl(
+    baseGroups = c("Sum of Breaches", "Breaches Per 100K"),
+    overlayGroups = c("Borders"), options = layersControlOptions(collapsed = TRUE))
+
+leaf
+
+rm(temp)
+  
+
+
+```
+
+
+## Drop Variables and Dichotomize DV
+
+```{r}
+
+mydata[, c(1:11, 13)]=NULL
+colnames(mydata)
+mydata$y[mydata$y>0]=1
+
+```
+## Engineer Variables and Reorder
+
+```{r}
+
+mydata$ALOS[mydata$ALOS==70]=7 # correct known outlier
+mydata$BedFreqSev=mydata$BedUtil*mydata$CMI*mydata$ALOS #calculate beds used / beds available x severity x average duration
+mydata$BedUtil=mydata$CMI=mydata$ALOS=NULL #drop variables used
+
+mydata=mydata[, c('y','Native', 'Hispanic', 'Black', 'Asian', 'Prop65', 'PopDensity',
+                  'BedFreqSev','AcuteBeds','OutpatientVisits',
+                  'OpProfitMargin', 'CapitalExp', 'OpIncome', 'AR', 'BadDebt',
+                  'PedTrauma', 'MedCenter', 
+                  'UE2019', 'Poverty')]
+```
+
+
+## Python Descriptive Statistics
+
+```{python}
+
+mydata=r.mydata
+mydata.describe()
+
+```
+
+## Descriptives
+
+```{r}
+
+options(scipen=999)
+describe(mydata)
+
+```
+
+## Correlations
+
+
+```{r}
+
+demographics=c('Native', 'Hispanic', 'Black', 'Asian', 'Prop65', 'PopDensity')
+workload=c('BedFreqSev','AcuteBeds', 'OutpatientVisits')
+financial=c('OpProfitMargin', 'CapitalExp', 'OpIncome', 'AR', 'BadDebt') 
+type=c('PedTrauma', 'MedCenter')
+economics=c('UE2019', 'Poverty')
+
+mycol=colorRampPalette(c("red","orange","yellow","white","green", "dark green"))(20)
+
+myf=function(x){
+  x=x[ , purrr::map_lgl(x, is.numeric)]
+  mycor=cor(x)
+  corrplot(mycor, method="ellipse", type="upper",
+         addCoef.col=TRUE, tl.cex=.6, number.cex=.5, insig="blank",
+         order="hclust", hclust.method="centroid", number.digits=2,
+         col=mycol)}
+
+myf(mydata)
+
+
+```
+## Pairs Plots
+
+```{r}
+
+kdepairs(mydata[,demographics])
+kdepairs(mydata[,workload])
+kdepairs(mydata[,financial])
+kdepairs(mydata[,economics])
+kdepairs(mydata[,type])
+
+```
+
+# Split
+
+```{r}
+set.seed(1234)
+mys=sample(1:nrow(mydata), .8*nrow(mydata), replace=F)
+train=mydata[mys,]
+test=mydata[-mys,]
+```
+
+
+# Scale
+
+```{r}
+mymeans=colMeans(train)  #use the means and sds from the training set to apply to the test set
+mysd=apply(train, 2, sd) #doing so avoids leakage
+
+for (i in 2:19){
+  train[,i]=(train[,i]-mymeans[i])/mysd[i]
+  test[,i]=(test[,i]-mymeans[i])/mysd[i]
+}
+  
+```
+
+
+# Oversample Training Set
+
+```{r}
+
+tmp=mwmote(train, numInstances = 500, classAttr = "y")
+train2=rbind(tmp,train)
+
+```
+
+# Logistic Regression (Unregularized)
+
+```{r}
+
+suppressWarnings({
+myglm=glm(y~.,data=train2, family='binomial')
+par(ask=FALSE)
+par(mfrow=c(2,3))
+})
+
+summary(myglm)
+
+```
+
+
+
+## VIF
+
+```{r}
+
+mys=summary(myglm)
+myvif=noquote(c(NA,vif(myglm)))
+names(myvif)='VIF'
+newcoefs=cbind(mys$coefficients, myvif)
+colnames(newcoefs)=c('Estimate', 'SE', 'Z', 'P(Z)', 'VIF')
+newcoefs
+
+```
+
+
+## Extreme Outliers
+
+```{r}
+
+plot(myglm, which =c(5))
+
+```
+
+## Linearity of Log odds
+
+```{r}
+
+myf=function(x) {
+  x=train2[,x]
+  p=m=rep(0,10)
+  q=quantile(x, seq(.1,1,.1))
+  m[1]=median(min(x, q[1]))
+  p[1]=length(train2$y[x<=q[1]])/nrow(train2)
+
+  for (i in 2:10){
+    j=i-1
+    m[i]=median(q[j], q[i])
+    p[i]=length(train2$y[x>q[j] & x <=q[i]])/nrow(train2)
+              }
+  
+  logodds=log((p+.01)/((1-p+.01)))
+  mydf=data.frame(logodds, m)
+  mylm=lm(logodds~m)
+  plot(x=m, y=logodds, col='red', xlab=str(x), ylab='LogOdds')
+  try(abline(mylm, col='blue'))
+}
+
+par(mai=c(0,0,0,0))
+par(mfrow=c(4,5))
+
+for (i in 2:19){myf(i)}
+
+
+```
+## Confusion Report
+
+
+```{r}
+
+mypred=as.factor(round(predict(myglm, test, type='response'),0))
+
+mycm=confusionMatrix(data=mypred, reference=as.factor(test$y), positive = '1')
+mycm
+
+```
+## Submodels
+
+
+```{r}
+
+d1=train2[,demographics]
+d2=train2[,workload]
+d3=train2[,financial]
+d4=train2[,type]
+d5=train2[,economics]
+
+
+sub1=glm(train2$y~.,data=d1, family='binomial')
+sub2=glm(train2$y~.,data=d2, family='binomial')
+sub3=glm(train2$y~.,data=d3, family='binomial')
+sub4=glm(train2$y~.,data=d4, family='binomial')
+sub5=glm(train2$y~.,data=d5, family='binomial')
+sub6=glm(train2$y~Native+Hispanic+Black+Asian+PopDensity+AcuteBeds+OutpatientVisits+OpProfitMargin+MedCenter+UE2019+Poverty, data=train2, family='binomial') #stepwise
+#mystep=stepAIC(sub6)
+
+
+pred1=as.factor(round(predict(sub1,test, type='response'),0))
+pred2=as.factor(round(predict(sub2,test, type='response'),0))
+pred3=as.factor(round(predict(sub3,test, type='response'),0))
+pred4=as.factor(round(predict(sub4,test, type='response'),0))
+pred5=as.factor(round(predict(sub5,test, type='response'),0))
+pred6=as.factor(round(predict(sub6,test, type='response'),0))
+
+confusionMatrix(data=pred1, reference=as.factor(test$y), positive = '1')
+confusionMatrix(data=pred2, reference=as.factor(test$y), positive = '1')
+confusionMatrix(data=pred3, reference=as.factor(test$y), positive = '1')
+confusionMatrix(data=pred4, reference=as.factor(test$y), positive = '1')
+confusionMatrix(data=pred5, reference=as.factor(test$y), positive = '1')
+confusionMatrix(data=pred6, reference=as.factor(test$y), positive = '1')
+
+```
+
+# Other Models
+
+## Prediction Functions
+
+```{python}
+
+test=r.test
+y_test=test['y']
+X_test=test.drop('y', axis=1)
+
+def myf(mod):
+    y_hat=mod.predict(X_test) #can use either encoded or decoded data..doesn't help
+    results=pd.DataFrame(CR(y_test, y_hat, output_dict=True))
+    try:  
+        CMD.from_estimator(mod,X_test,y_test)
+        plt.show()
+    except:
+        print('No confusion plot.')
+    return(results)
+
+def prplot(mod):
+    average_precision = average_precision_score(y_test, mod.predict(X_test))
+    disp = PRD.from_estimator(mod, X_test, y_test)
+    disp.ax_.set_title('Precision-Recall curve: '
+                   'AP={0:0.2f}'.format(average_precision))
+    plt.show()
+    
+def mytree(mod):
+    imp, std=mod.feature_importances_, np.std([mod.feature_importances_ for tree in mod.estimators_], axis=0)
+    importances = pd.Series(imp, index=mydata.columns[1:20]).sort_values(ascending=False)
+    fig, ax = plt.subplots()
+    importances.plot.bar(yerr=std[0:20], ax=ax)
+    ax.set_title("Feature importances using MDI")
+    ax.set_ylabel("Mean decrease in impurity")
+    fig.tight_layout() 
+    plt.show()
+
+```
+
+## Perceptron
+
+
+```{python}
+
+train2=r.train2
+X_train2=train2.drop('y', axis=1)
+feature_names=X_train2.columns
+y_train2=train2['y']
+nn = Perceptron(alpha=1e-5, random_state=64, max_iter=2000)
+nn.fit(X_train2, y_train2)
+print(myf(nn))
+print(prplot(nn))
+nndf=pd.DataFrame(np.squeeze(nn.coef_), columns=['NN_coef'])
+nndf.index=np.squeeze(feature_names)
+
+```
+
+## Regularized Logistic Regression
+
+
+```{python}
+mylr=LR(fit_intercept = True, class_weight='balanced') #logistic model
+mylr.fit(X_train2, y_train2)  #Fit on training data 
+print(myf(mylr)) #predict on test set and plot
+prplot(mylr)
+
+lrdf=pd.DataFrame(np.squeeze(mylr.coef_), columns=['LR_coef'])
+lrdf.index=np.squeeze(feature_names)
+predProbs = mylr.predict_proba(X_train2)
+X_design = np.hstack([np.ones((X_train2.shape[0], 1)), X_train2])
+V = np.diagflat(np.product(predProbs, axis=1))
+covLogit = np.linalg.inv(np.dot(np.dot(X_design.T, V), X_design))
+lrdf['SE']=np.sqrt(np.diag(covLogit))[1:106]
+
+lrdf['Odds_Ratio']=np.exp(lrdf['LR_coef'])
+lrdf['OR_Lower_5%']=np.exp(lrdf['LR_coef']-1.96*lrdf['SE'])
+lrdf['OR_Upper_5%']=np.exp(lrdf['LR_coef']+1.96*lrdf['SE'])
+lrdf['Z']=lrdf['LR_coef']/lrdf['SE']
+
+lrdf['p_value']=np.round(1-norm.cdf(abs(lrdf['Z'])),3)
+
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+X=pd.DataFrame(X_train2)
+vif_data = pd.DataFrame()
+vif_data["feature"] = X.columns
+vif_data["VIF"] = [variance_inflation_factor(X.values, i)
+    for i in range(len(X.columns))]
+lrdf['VIF']=vif_data.values[:,1]
+```
+## Linear Support Vector Machine
+
+```{python}
+
+mysvm=LinearSVC(random_state=64, tol=1e-2, max_iter=50000)
+mysvm.fit(X_train2, y_train2)  #Fit on training set
+print(myf(mysvm))
+print(prplot(mysvm))
+mysvmdf=pd.DataFrame(np.squeeze(mysvm.coef_), columns=['SVM_coef'])
+mysvmdf.index=np.squeeze(feature_names)
+
+```
+
+
+
+## Gradient Boosting Classifier
+
+```{python}
+
+myGBC=GBC(n_estimators =1000, random_state = 64, max_depth=1)
+myGBC.fit(X_train2, y_train2)  #Fit on training set
+print(myf(myGBC))
+print(prplot(myGBC))
+imp, std=myGBC.feature_importances_, np.std([myGBC.feature_importances_ for tree in myGBC.estimators_], axis=0)
+GBCimp = pd.Series(imp, index=mydata.columns[1:20])
+
+
+```
+
+## Random Forest
+
+```{python}
+
+myrf=RFC(n_estimators = 500,max_depth=3,criterion='gini',bootstrap=True,                   
+                            n_jobs = -1, random_state = 64) #RF Model
+myrf.fit(X_train2, y_train2)  # Fit on the training set 
+print(myf(myrf))
+print(mytree(myrf))
+print(prplot(myrf))
+treeplot(myrf.estimators_[1])
+imp, std=myrf.feature_importances_, np.std([myrf.feature_importances_ for tree in myrf.estimators_], axis=0)
+rfimp = pd.Series(imp, index=mydata.columns[1:20])
+
+
+
+```
+
+## Coefficient Comparison (Python Runs)
+
+```{python}
+
+lrdf['NN']=nndf.values
+lrdf['RF']=rfimp.values
+lrdf['GBC']=GBCimp.values
+lrdf['SVM']=mysvmdf.values
+lrdf
+
+```
+
